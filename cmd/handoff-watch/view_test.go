@@ -109,6 +109,19 @@ func TestSelectionFollowsTheHandoff(t *testing.T) {
 	}
 }
 
+func TestEnterMovesTheFocusBothWays(t *testing.T) {
+	v := testView(t, 24, 80)
+	v.key("\r")
+	if !v.focusEvents {
+		t.Fatal("enter did not focus the events")
+	}
+	v.key("\r")
+	v.key("j")
+	if v.focusEvents || v.selected != 1 {
+		t.Fatalf("focusEvents = %v, selected = %d", v.focusEvents, v.selected)
+	}
+}
+
 func TestFilter(t *testing.T) {
 	v := testView(t, 24, 80)
 	for _, key := range splitKeys("/BLOCK\r") {

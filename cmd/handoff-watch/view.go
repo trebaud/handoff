@@ -228,28 +228,32 @@ func featureWidth(features []*feature) int {
 	return min(width, 40)
 }
 
-func listRow(p painter, f *feature, width int, now time.Time) string {
+func listRow(p painter, f *feature, width int, now time.Time, strong bool) string {
 	last := f.last()
-	return pad(f.name, width) + "  " + p.pipeline(f.steps) + "  " +
+	name := pad(f.name, width)
+	if strong {
+		name = p.bold(name)
+	}
+	return name + "  " + p.pipeline(f.steps) + "  " +
 		p.status(f.state, p.mark(f.state)+" "+pad(f.state, 7)) + "  " + pad(last.Step, 11) + "  " +
 		fmt.Sprintf("%4s", age(now.Sub(last.TS))) + "  " + repoNames(f)
 }
 
-// listLines gives the column titles, then one row per feature. With focused, the
-// selected row is a reverse bar of cols cells.
-func listLines(p painter, features []*feature, selected int, focused bool, cols int, now time.Time) []string {
+// listLines gives the column titles, then one row per feature. The selected row has a
+// mark in front and keeps its status colors: the mark and the name are strong with
+// focused, and the mark is dim without.
+func listLines(p painter, features []*feature, selected int, focused bool, now time.Time) []string {
 	width := featureWidth(features)
 	lines := []string{p.dim("  " + pad("FEATURE", width) + "  " + pad("STEPS", len(steps)) + "  " +
 		pad("STATE", 9) + "  " + pad("NOW", 11) + "  LAST  REPOS")}
 	for i, f := range features {
 		switch {
 		case i != selected:
-			lines = append(lines, "  "+listRow(p, f, width, now))
+			lines = append(lines, "  "+listRow(p, f, width, now, false))
 		case focused:
-			plain := painter{running: p.running}
-			lines = append(lines, p.attr(sgrReverse, pad("> "+listRow(plain, f, width, now), cols)))
+			lines = append(lines, p.bold(p.hue(sgrAccent, "▌"))+" "+listRow(p, f, width, now, true))
 		default:
-			lines = append(lines, p.bold(">")+" "+listRow(p, f, width, now))
+			lines = append(lines, p.dim("▌")+" "+listRow(p, f, width, now, false))
 		}
 	}
 	return lines
@@ -332,7 +336,7 @@ func snapshot(p painter, home string, features []*feature, now time.Time) []stri
 	if len(features) == 0 {
 		return []string{"no handoff logs in " + home}
 	}
-	lines := listLines(p, features, -1, false, 0, now)
+	lines := listLines(p, features, -1, false, now)
 	for _, f := range features {
 		lines = append(lines, "", p.bold(f.name))
 		lines = append(lines, detailHead(p, f, 0)...)
@@ -458,10 +462,8 @@ func (v *view) key(key string) bool {
 		v.help = true
 	case "/":
 		v.typing = true
-	case "\t", "\x1b[Z":
+	case "\t", "\x1b[Z", "\r", "\n":
 		v.focusEvents = !v.focusEvents
-	case "\r", "\n":
-		v.focusEvents = true
 	case "\x1b":
 		if v.focusEvents {
 			v.focusEvents = false
@@ -596,7 +598,7 @@ func (v *view) body(p painter, now time.Time) []string {
 	if v.filter != "" {
 		position += fmt.Sprintf(" of %d  /%s", len(v.all), v.filter)
 	}
-	list := listLines(p, v.shown, v.selected, !v.focusEvents, v.cols, now)
+	list := listLines(p, v.shown, v.selected, !v.focusEvents, now)
 	first := max(0, min(v.selected-listRoom/2, len(v.shown)-listRoom))
 	lines := []string{title + p.dim(position), list[0]}
 	lines = append(lines, list[1+first:1+first+listRoom]...)
@@ -630,7 +632,7 @@ func (v *view) footer(p painter) string {
 	case len(v.all) == 0:
 		pairs = nil
 	case v.focusEvents:
-		pairs = []string{"j/k", "scroll", "g/G", "ends", "tab", "handoffs", "/", "filter"}
+		pairs = []string{"j/k", "scroll", "g/G", "ends", "tab/esc", "handoffs", "/", "filter"}
 	case v.filter != "":
 		pairs = append(pairs, "esc", "clear")
 	default:
@@ -644,10 +646,9 @@ func helpLines(p painter) []string {
 		{"j k  ↓ ↑", "next and previous handoff, or newer and older events"},
 		{"g G", "first and last handoff, or oldest and newest events"},
 		{"PgUp PgDn", "one page"},
-		{"tab", "move the focus between the handoffs and the events"},
-		{"enter", "focus the events of the selected handoff"},
+		{"tab enter", "move the focus between the handoffs and the events"},
 		{"/", "filter the handoffs by name, state or repo"},
-		{"esc", "leave the events, then clear the filter"},
+		{"esc", "back to the handoffs, then clear the filter"},
 		{"?", "this help"},
 		{"q", "quit"},
 	}

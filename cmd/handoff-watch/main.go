@@ -6,8 +6,8 @@
 //
 //	handoff-watch [-once] [-interval 1s]
 //
-// Keys: j/k or the arrows move, g/G jump to the ends, tab moves the focus between the
-// handoffs and the events, / filters, ? shows every key, q quits.
+// Keys: j/k or the arrows move, g/G jump to the ends, tab or enter moves the focus
+// between the handoffs and the events, / filters, ? shows every key, q quits.
 // With -once, or when the output is not a terminal, it prints one plain snapshot.
 package main
 

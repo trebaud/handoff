@@ -51,9 +51,9 @@ Failed and blocked handoffs come first, then the running ones, then the done one
 | Key | Action |
 |---|---|
 | `j` `k` `g` `G`, arrows, `PgUp` `PgDn` | Move |
-| `tab`, `enter` | Focus the events of the selected handoff |
+| `tab`, `enter` | Move the focus between the handoffs and the events |
 | `/` | Filter by name, state or repo |
-| `esc` | Leave the events, then clear the filter |
+| `esc` | Back to the handoffs, then clear the filter |
 | `?` `q` | Help, quit |
 
 `NO_COLOR` is honored. The view needs a terminal of 60x12 or more.
