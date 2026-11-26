@@ -7,14 +7,45 @@ An agent skill that takes one task to reviewed code in a fresh
 [mori](https://github.com/trebaud/mori) worktree, built by a background agent, plus
 `handoff-watch`, a small TUI of every handoff in flight.
 
+## How it works
+
+```
+   spec file  ·  description  ·  task link (ClickUp, Linear, Jira, GitHub issue)
+                    │
+                    ▼
+ ┌─ SESSION (stays free) ─────────────┐       ┌─ BACKGROUND AGENT (one per task) ──────────┐
+ │                                    │       │                                            │
+ │ 1  read-task    task + criteria    │       │ starts with no context; limits:            │
+ │ 2  pick-repos   repos + branch     │       │ no questions, no push, no PR               │
+ │                                    │       │                                            │
+ │ 3  spawn-agent  full task text     ├──────▶│ 4  worktree    one mori worktree per repo  │
+ │                                    │       │    implement   code, tests, local commits  │
+ │    free: more handoffs can start   │       │ 5  review      lgtm: build, security,      │
+ │                                    │       │                reuse, architecture, taste  │
+ │ 7  relay        report in full     │◀──────┤ 6  report      diffs, checks, open points  │
+ │    STOP         approval before PR │       │                                            │
+ │                                    │       │                                            │
+ └──────────────────┬─────────────────┘       └──────────────────────┬─────────────────────┘
+                    │               one event per step               │
+                    └────────────────────────┬───────────────────────┘
+                                             ▼
+                             ~/.handoff/<branch>/events.jsonl  ──▶  handoff-watch
+```
+
+The session only reads the task, picks the repos and starts the agent, so further handoffs can
+start while one runs. The agent never pushes and never opens a PR.
+
 ## Install
 
 ```bash
 git clone https://github.com/trebaud/handoff.git && cd handoff && ./install.sh
 ```
 
-This installs the skill, the skills it calls (`mori`, `lgtm` and the four audits `lgtm` runs)
-and builds `handoff-watch` into `~/.local/bin`. Skills already installed are left alone.
+The skill relies on skills from [trebaud/skills](https://github.com/trebaud/skills): `lgtm` and
+the four audits it runs (`security-audit`, `dont-reinvent-the-wheel`, `architecture-audit`,
+`taste`), plus the `mori` skill from [trebaud/mori](https://github.com/trebaud/mori). The
+install script downloads and installs all of them with the `handoff` skill, then builds
+`handoff-watch` into `~/.local/bin`. Skills already installed are left alone.
 
 ```bash
 ./install.sh --check    # report what is missing, change nothing
