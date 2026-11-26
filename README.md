@@ -44,12 +44,28 @@ the `mori` binary on `PATH`; the installer warns when one is absent.
 ## Watch
 
 ```bash
-handoff-watch                 # live view: j/k move, g/G first/last, q quit
+handoff-watch                 # live view
 handoff-watch -once           # one plain snapshot
 handoff-watch -interval 5s    # time between two reads of the logs
 ```
 
 One row per handoff with its steps, state and last event, then the events of the selected one.
+Failed and blocked handoffs come first, then the running ones, then the done ones.
+
+| Key | Action |
+|---|---|
+| `j` `k`, arrows | Next and previous handoff, or newer and older events |
+| `g` `G` | First and last handoff, or oldest and newest events |
+| `PgUp` `PgDn` | One page |
+| `tab` | Move the focus between the handoffs and the events |
+| `enter` | Focus the events of the selected handoff |
+| `/` | Filter the handoffs by name, state or repo |
+| `esc` | Leave the events, then clear the filter |
+| `?` | Help |
+| `q` | Quit |
+
+The view needs a terminal of 60x12 or more and uses the 16 ANSI colors only. `NO_COLOR` removes
+the colors: every status keeps a mark of its own (`✓` `!` `✗` `·`, a spinner for a started step).
 
 ## Event log
 
