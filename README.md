@@ -1,7 +1,7 @@
 # handoff
 
 [![Go](https://img.shields.io/badge/go-1.21%2B-00ADD8?logo=go)](https://go.dev)
-[![Release](https://img.shields.io/github/v/release/trebaud/handoff)](https://github.com/trebaud/handoff/releases)
+[![Release](https://img.shields.io/badge/release-v0.2.0-blue)](https://github.com/trebaud/handoff/releases/tag/v0.2.0)
 
 An agent skill that takes one task to reviewed code in a fresh
 [mori](https://github.com/trebaud/mori) worktree, built by a background agent, plus
