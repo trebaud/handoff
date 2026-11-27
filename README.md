@@ -15,15 +15,15 @@ An agent skill that takes one task to reviewed code in a fresh
                     ▼
  ┌─ SESSION (stays free) ─────────────┐       ┌─ BACKGROUND AGENT (one per task) ──────────┐
  │                                    │       │                                            │
- │ 1  read-task    task + criteria    │       │ starts with no context; limits:            │
- │ 2  pick-repos   repos + branch     │       │ no questions, no push, no PR               │
+ │ setup      task + criteria,        │       │ starts with no context; limits:            │
+ │            repos + branch          │       │ no questions, no push, no PR               │
  │                                    │       │                                            │
- │ 3  spawn-agent  full task text     ├──────▶│ 4  worktree    one mori worktree per repo  │
- │                                    │       │    implement   code, tests, local commits  │
- │    free: more handoffs can start   │       │ 5  review      lgtm: build, security,      │
- │                                    │       │                reuse, architecture, taste  │
- │ 7  relay        report in full     │◀──────┤ 6  report      diffs, checks, open points  │
- │    STOP         approval before PR │       │                                            │
+ │            spawn the agent         ├──────▶│ setup      one mori worktree per repo      │
+ │                                    │       │ implement  code, tests, local commits      │
+ │    free: more handoffs can start   │       │ review     lgtm: build, security,          │
+ │                                    │       │            reuse, architecture, taste      │
+ │            relay the report        │◀──────┤ report     diffs, checks, open points      │
+ │    STOP    approval before PR      │       │                                            │
  │                                    │       │                                            │
  └──────────────────┬─────────────────┘       └──────────────────────┬─────────────────────┘
                     │               one event per step               │
@@ -85,7 +85,12 @@ Failed and blocked handoffs come first, then the running ones, then the done one
 | `tab`, `enter` | Move the focus between the handoffs and the events |
 | `/` | Filter by name, state or repo |
 | `esc` | Back to the handoffs, then clear the filter |
+| `d` | Archive the selected handoff, after `y` to confirm |
 | `?` `q` | Help, quit |
+
+Archiving moves the log to `~/.handoff/.archive/` and leaves the worktrees and the branch
+alone; move the folder back to restore it. A running handoff cannot be archived, since its
+agent would write the log again.
 
 `NO_COLOR` is honored. The view needs a terminal of 60x12 or more.
 
@@ -99,12 +104,10 @@ The skill and the TUI share only this format: one file per handoff,
 | `ts` | UTC, `2006-01-02T15:04:05.000Z` |
 | `feature` | The branch, also the worktree name in every repo |
 | `worktree_path`, `repo`, `commit` | `null` until the worktree exists |
-| `actor` | `session`, `agent` |
-| `step` | `read-task`, `pick-repos`, `spawn-agent`, `worktree`, `implement`, `review`, `report`, `relay` |
-| `status` | `started`, `done`, `failed`, `blocked` |
+| `step` | `setup`, `implement`, `review`, `report` |
+| `status` | `done`, `failed`, `blocked`: logged when the step ends |
 | `message` | One line |
-| `data` | Extra string pairs |
 
 ```bash
-go run skill/scripts/log_event.go -actor session my-branch read-task done "read the spec"
+go run skill/scripts/log_event.go my-branch setup done "agent started"
 ```

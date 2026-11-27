@@ -100,7 +100,7 @@ func (p painter) namedPipeline(stepStatus map[string]string) string {
 	cells := make([]string, len(steps))
 	for i, step := range steps {
 		status := stepStatus[step]
-		cells[i] = p.status(status, p.mark(status)+" "+stepShort[step])
+		cells[i] = p.status(status, p.mark(status)+" "+step)
 	}
 	return strings.Join(cells, " ")
 }
@@ -206,9 +206,6 @@ func repoNames(f *feature) string {
 	for i, repo := range f.repos {
 		names[i] = repo.name
 	}
-	if len(names) == 0 {
-		return f.last().Data["repos"]
-	}
 	return strings.Join(names, ", ")
 }
 
@@ -228,14 +225,17 @@ func featureWidth(features []*feature) int {
 	return min(width, 40)
 }
 
+// The STEPS column: one mark per step, and room for its title.
+var stepsWidth = max(len(steps), len("STEPS"))
+
 func listRow(p painter, f *feature, width int, now time.Time, strong bool) string {
 	last := f.last()
 	name := pad(f.name, width)
 	if strong {
 		name = p.bold(name)
 	}
-	return name + "  " + p.pipeline(f.steps) + "  " +
-		p.status(f.state, p.mark(f.state)+" "+pad(f.state, 7)) + "  " + pad(last.Step, 11) + "  " +
+	return name + "  " + p.pipeline(f.steps) + strings.Repeat(" ", stepsWidth-len(steps)) + "  " +
+		p.status(f.state, p.mark(f.state)+" "+pad(f.state, 7)) + "  " + pad(f.now, 9) + "  " +
 		fmt.Sprintf("%4s", age(now.Sub(last.TS))) + "  " + repoNames(f)
 }
 
@@ -244,8 +244,8 @@ func listRow(p painter, f *feature, width int, now time.Time, strong bool) strin
 // focused, and the mark is dim without.
 func listLines(p painter, features []*feature, selected int, focused bool, now time.Time) []string {
 	width := featureWidth(features)
-	lines := []string{p.dim("  " + pad("FEATURE", width) + "  " + pad("STEPS", len(steps)) + "  " +
-		pad("STATE", 9) + "  " + pad("NOW", 11) + "  LAST  REPOS")}
+	lines := []string{p.dim("  " + pad("FEATURE", width) + "  " + pad("STEPS", stepsWidth) + "  " +
+		pad("STATE", 9) + "  " + pad("NOW", 9) + "  LAST  REPOS")}
 	for i, f := range features {
 		switch {
 		case i != selected:
@@ -297,6 +297,7 @@ func detailHead(p painter, f *feature, cols int) []string {
 				repoSteps[step] = f.steps[step]
 			}
 		}
+		markCurrent(repoSteps, f.state == "running")
 		row := "  " + pad(repo.name, width) + "  " + p.namedPipeline(repoSteps) + "  "
 		path := repo.path
 		if cols > 0 {
@@ -318,18 +319,14 @@ func eventLines(p painter, f *feature, events []event, timeFormat string) []stri
 		if width > 0 {
 			repo = pad(e.Repo, width) + "  "
 		}
-		lines[i] = "  " + p.dim(e.TS.Local().Format(timeFormat)) + "  " + pad(e.Actor, 7) + "  " + repo +
-			pad(e.Step, 11) + "  " + p.status(e.Status, pad(e.Status, 7)) + "  " + e.Message
+		lines[i] = "  " + p.dim(e.TS.Local().Format(timeFormat)) + "  " + repo +
+			p.status(e.Status, p.mark(e.Status)+" "+pad(e.Step, 9)) + "  " + e.Message
 	}
 	return lines
 }
 
 func legend(p painter) string {
-	names := make([]string, len(steps))
-	for i, step := range steps {
-		names[i] = stepShort[step]
-	}
-	return p.dim("steps: " + strings.Join(names, " ") + "   ✓ done  ● started  ! blocked  ✗ failed  · pending")
+	return p.dim("steps: " + strings.Join(steps, " ") + "   ✓ done  ● running  ! blocked  ✗ failed  · pending")
 }
 
 func snapshot(p painter, home string, features []*feature, now time.Time) []string {
@@ -360,6 +357,8 @@ type view struct {
 	filter       string
 	typing       bool
 	help         bool
+	confirm      string // the handoff that y archives
+	notice       string // one line for the footer, until the next key
 }
 
 func (v *view) load(features []*feature) {
@@ -447,8 +446,16 @@ const farAway = 1 << 20
 
 // key applies one key and reports whether to quit.
 func (v *view) key(key string) bool {
+	v.notice = ""
 	if v.help {
 		v.help = false
+		return false
+	}
+	if v.confirm != "" {
+		if key == "y" || key == "Y" {
+			v.archiveCurrent()
+		}
+		v.confirm = ""
 		return false
 	}
 	if v.typing {
@@ -462,6 +469,14 @@ func (v *view) key(key string) bool {
 		v.help = true
 	case "/":
 		v.typing = true
+	case "d", "D":
+		if f := v.current(); f != nil {
+			if f.state == "running" {
+				v.notice = f.name + " is running: archive it once it stops"
+			} else {
+				v.confirm = f.name
+			}
+		}
 	case "\t", "\x1b[Z", "\r", "\n":
 		v.focusEvents = !v.focusEvents
 	case "\x1b":
@@ -485,6 +500,31 @@ func (v *view) key(key string) bool {
 		v.move(v.page())
 	}
 	return false
+}
+
+// archiveCurrent archives the handoff named by v.confirm if it is still the selected one
+// and has not started to run again, then selects the row that takes its place.
+func (v *view) archiveCurrent() {
+	f := v.current()
+	if f == nil || f.name != v.confirm {
+		return
+	}
+	if f.state == "running" {
+		v.notice = f.name + " is running again: not archived"
+		return
+	}
+	if err := archive(v.home, f); err != nil {
+		v.notice = "cannot archive " + f.name + ": " + err.Error()
+		return
+	}
+	switch {
+	case v.selected+1 < len(v.shown):
+		v.selectedName = v.shown[v.selected+1].name
+	case v.selected > 0:
+		v.selectedName = v.shown[v.selected-1].name
+	}
+	v.notice = "archived " + f.name + " in " + tilde(filepath.Join(v.home, ".archive"))
+	v.load(readFeatures(v.home))
 }
 
 func (v *view) page() int { return max(1, v.eventRoom-1) }
@@ -627,6 +667,12 @@ func (v *view) footer(p painter) string {
 	if v.typing {
 		return p.bold("/") + v.filter + p.attr(sgrReverse, " ") + "  " + p.hints("enter", "keep", "esc", "clear")
 	}
+	if v.confirm != "" {
+		return "archive " + p.bold(v.confirm) + "?  " + p.hints("y", "yes", "any key", "no")
+	}
+	if v.notice != "" {
+		return v.notice
+	}
 	pairs := []string{"j/k", "move", "g/G", "ends", "tab", "events"}
 	switch {
 	case len(v.all) == 0:
@@ -649,6 +695,7 @@ func helpLines(p painter) []string {
 		{"tab enter", "move the focus between the handoffs and the events"},
 		{"/", "filter the handoffs by name, state or repo"},
 		{"esc", "back to the handoffs, then clear the filter"},
+		{"d", "archive the handoff: its log moves to .archive, not while it runs"},
 		{"?", "this help"},
 		{"q", "quit"},
 	}
@@ -657,9 +704,9 @@ func helpLines(p painter) []string {
 		lines = append(lines, "  "+p.bold(pad(key[0], 11))+key[1])
 	}
 	marks := make([]string, 0, 5)
-	for _, status := range []string{"done", "started", "blocked", "failed", "pending"} {
+	for _, status := range []string{"done", "running", "blocked", "failed", "pending"} {
 		marks = append(marks, p.status(status, p.mark(status)+" "+status))
 	}
 	return append(lines, "", p.bold("MARKS"), "  "+strings.Join(marks, "   "),
-		"", p.bold("STEPS"), "  "+strings.Join(steps[:4], " → ")+" →", "  "+strings.Join(steps[4:], " → "))
+		"", p.bold("STEPS"), "  "+strings.Join(steps, " → "))
 }

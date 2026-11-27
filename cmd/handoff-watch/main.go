@@ -7,7 +7,8 @@
 //	handoff-watch [-once] [-interval 1s]
 //
 // Keys: j/k or the arrows move, g/G jump to the ends, tab or enter moves the focus
-// between the handoffs and the events, / filters, ? shows every key, q quits.
+// between the handoffs and the events, / filters, d archives the selected handoff,
+// ? shows every key, q quits.
 // With -once, or when the output is not a terminal, it prints one plain snapshot.
 package main
 
@@ -28,30 +29,24 @@ import (
 	"time"
 )
 
-var steps = []string{"read-task", "pick-repos", "spawn-agent", "worktree", "implement", "review", "report", "relay"}
+var steps = []string{"setup", "implement", "review", "report"}
 
-var stepShort = map[string]string{
-	"read-task": "read", "pick-repos": "pick", "spawn-agent": "spawn", "worktree": "wt",
-	"implement": "impl", "review": "review", "report": "report", "relay": "relay",
-}
-
-// A higher rank wins when the repos of one handoff disagree on a step.
-var statusRank = map[string]int{"done": 1, "started": 2, "blocked": 3, "failed": 4}
+// A higher rank wins when the repos of one handoff disagree on a step: a repo that has
+// not logged the step yet ("") keeps it from being done.
+var statusRank = map[string]int{"done": 1, "": 2, "started": 2, "blocked": 3, "failed": 4}
 
 // The states of a handoff, the one that needs a person first.
 var stateOrder = []string{"failed", "blocked", "running", "done"}
 
 type event struct {
-	TS           time.Time         `json:"ts"`
-	Feature      string            `json:"feature"`
-	WorktreePath string            `json:"worktree_path"`
-	Repo         string            `json:"repo"`
-	Commit       string            `json:"commit"`
-	Actor        string            `json:"actor"`
-	Step         string            `json:"step"`
-	Status       string            `json:"status"`
-	Message      string            `json:"message"`
-	Data         map[string]string `json:"data"`
+	TS           time.Time `json:"ts"`
+	Feature      string    `json:"feature"`
+	WorktreePath string    `json:"worktree_path"`
+	Repo         string    `json:"repo"`
+	Commit       string    `json:"commit"`
+	Step         string    `json:"step"`
+	Status       string    `json:"status"`
+	Message      string    `json:"message"`
 }
 
 type repoState struct {
@@ -61,10 +56,12 @@ type repoState struct {
 
 type feature struct {
 	name    string
+	dir     string
 	events  []event
 	steps   map[string]string
 	repos   []*repoState
 	state   string
+	now     string // the step in progress, or the one that failed or blocked
 	skipped int
 }
 
@@ -89,7 +86,8 @@ func readFeature(logFile string) *feature {
 	}
 	defer file.Close()
 
-	f := &feature{name: filepath.Base(filepath.Dir(logFile)), steps: map[string]string{}}
+	dir := filepath.Dir(logFile)
+	f := &feature{name: filepath.Base(dir), dir: dir, steps: map[string]string{}}
 	repos := map[string]*repoState{}
 	latest := map[string]map[string]string{}
 
@@ -131,14 +129,24 @@ func readFeature(logFile string) *feature {
 	}
 
 	for step, byRepo := range latest {
-		for _, status := range byRepo {
-			if statusRank[status] > statusRank[f.steps[step]] {
-				f.steps[step] = status
+		status, perRepo := "done", false
+		for repo, logged := range byRepo {
+			perRepo = perRepo || repo != ""
+			if statusRank[logged] > statusRank[status] {
+				status = logged
 			}
 		}
+		if perRepo {
+			for _, repo := range f.repos {
+				if statusRank[repo.steps[step]] > statusRank[status] {
+					status = repo.steps[step]
+				}
+			}
+		}
+		f.steps[step] = status
 	}
 	f.state = "running"
-	if f.steps["relay"] == "done" {
+	if f.steps["report"] == "done" {
 		f.state = "done"
 	}
 	for _, status := range f.steps {
@@ -146,7 +154,23 @@ func readFeature(logFile string) *feature {
 			f.state = status
 		}
 	}
+	f.now = markCurrent(f.steps, f.state == "running")
 	return f
+}
+
+// markCurrent gives the first step that is not done. The log holds only the end of each
+// step, so while the handoff runs that step is the one in progress: it is marked
+// started.
+func markCurrent(stepStatus map[string]string, running bool) string {
+	for _, step := range steps {
+		if stepStatus[step] != "done" {
+			if running && stepStatus[step] == "" {
+				stepStatus[step] = "started"
+			}
+			return step
+		}
+	}
+	return steps[len(steps)-1]
 }
 
 func readFeatures(home string) []*feature {
@@ -164,6 +188,21 @@ func readFeatures(home string) []*feature {
 		return features[a].last().TS.After(features[b].last().TS)
 	})
 	return features
+}
+
+// archive moves the log of a handoff to $HANDOFF_HOME/.archive, out of the view. It
+// leaves the worktrees and the branch alone. The logger trims the leading dots of its
+// folder names, so no handoff can take the name .archive.
+func archive(home string, f *feature) error {
+	archived := filepath.Join(home, ".archive")
+	if err := os.MkdirAll(archived, 0o755); err != nil {
+		return err
+	}
+	target := filepath.Join(archived, f.name)
+	if _, err := os.Stat(target); err == nil {
+		target += "-" + time.Now().UTC().Format("20060102-150405")
+	}
+	return os.Rename(f.dir, target)
 }
 
 func stty(args ...string) (string, error) {

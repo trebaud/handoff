@@ -22,25 +22,22 @@ Log one event at each point below with `scripts/log_event.go`, next to this file
 before the branch:
 
 ```bash
-go run <skill-dir>/scripts/log_event.go [-worktree <absolute path>] [-actor session] \
-  [-data key=value ...] <branch> <step> <status> "<one line>"
+go run <skill-dir>/scripts/log_event.go [-worktree <absolute path>] <branch> <step> <status> "<one line>"
 ```
 
 Every event of one handoff goes to `~/.handoff/<branch>/events.jsonl`; the branch is also the
-worktree name. `HANDOFF_HOME` moves the root. Status is `started`, `done`, `failed` or `blocked`.
-The session passes `-actor session`. The agent passes `-worktree` from the moment the worktree
-exists, once per worktree: it adds the repo and the commit to the event.
+worktree name. `HANDOFF_HOME` moves the root. Log a step once it ends, with `done`, `failed` or
+`blocked`: the step after the last done one counts as running. The agent passes `-worktree` from
+the moment the worktree exists, once per worktree: it adds the repo and the commit to the event.
 
-| Step | Logged by | When |
+| Step | Logged by | When it ends |
 |---|---|---|
-| `read-task` | session | `done` once the branch name is known, with `-data source=<file, url or text>` |
-| `pick-repos` | session | `done`, with `-data repos=<comma-separated names>` |
-| `spawn-agent` | session | `done`, with `-data agent=<agent name>` |
-| `worktree` | agent | `done` when created, `failed` when not |
-| `implement` | agent | `started`, then `done`, `failed` or `blocked` |
-| `review` | agent | `started`, then `done` or `failed` |
-| `report` | agent | `done`, just before the final message |
-| `relay` | session | `done` when the report is relayed, `failed` when the agent died |
+| `setup` | session | once the agent runs |
+| `setup` | agent | once the worktree exists, `failed` when it cannot be made |
+| `implement` | agent | code committed and checks pass, or `failed`, or `blocked` on a question |
+| `review` | agent | `lgtm` ran and its fixes are committed, or `failed` |
+| `report` | agent | just before the final message |
+| `report` | session | `failed` when the agent died or stopped before its report |
 
 Put the reason in the message of every `failed` and `blocked` event. A logging error never stops
 the work: note it under **Open points** and go on.

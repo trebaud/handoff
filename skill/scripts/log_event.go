@@ -11,8 +11,7 @@
 //
 // Usage:
 //
-//	go run log_event.go [-worktree PATH] [-actor session|agent] [-data KEY=VALUE ...]
-//	                    <feature> <step> <status> [message]
+//	go run log_event.go [-worktree PATH] <feature> <step> <status> [message]
 //
 // It prints the path of the log file it wrote to.
 package main
@@ -32,37 +31,21 @@ import (
 )
 
 var (
-	steps    = []string{"read-task", "pick-repos", "spawn-agent", "worktree", "implement", "review", "report", "relay"}
-	statuses = []string{"started", "done", "failed", "blocked"}
-	actors   = []string{"session", "agent"}
+	steps    = []string{"setup", "implement", "review", "report"}
+	statuses = []string{"done", "failed", "blocked"}
 
 	unsafeChars = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 )
 
 type event struct {
-	TS           string            `json:"ts"`
-	Feature      string            `json:"feature"`
-	WorktreePath *string           `json:"worktree_path"`
-	Repo         *string           `json:"repo"`
-	Commit       *string           `json:"commit"`
-	Actor        string            `json:"actor"`
-	Step         string            `json:"step"`
-	Status       string            `json:"status"`
-	Message      string            `json:"message"`
-	Data         map[string]string `json:"data"`
-}
-
-type dataFlag map[string]string
-
-func (d dataFlag) String() string { return fmt.Sprint(map[string]string(d)) }
-
-func (d dataFlag) Set(pair string) error {
-	key, value, found := strings.Cut(pair, "=")
-	if !found || key == "" {
-		return fmt.Errorf("expects KEY=VALUE, got %q", pair)
-	}
-	d[key] = value
-	return nil
+	TS           string  `json:"ts"`
+	Feature      string  `json:"feature"`
+	WorktreePath *string `json:"worktree_path"`
+	Repo         *string `json:"repo"`
+	Commit       *string `json:"commit"`
+	Step         string  `json:"step"`
+	Status       string  `json:"status"`
+	Message      string  `json:"message"`
 }
 
 func fail(format string, args ...any) {
@@ -118,10 +101,7 @@ func handoffHome() string {
 }
 
 func main() {
-	data := dataFlag{}
 	worktree := flag.String("worktree", "", "absolute path of the worktree the event is about")
-	actor := flag.String("actor", "agent", "who logs the event: "+strings.Join(actors, " or "))
-	flag.Var(data, "data", "extra KEY=VALUE field, repeatable")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: log_event [flags] <feature> <step> <status> [message]")
 		fmt.Fprintln(os.Stderr, "  step:   "+strings.Join(steps, ", "))
@@ -146,19 +126,14 @@ func main() {
 	if !slices.Contains(statuses, status) {
 		fail("unknown status %q, choose from %s", status, strings.Join(statuses, ", "))
 	}
-	if !slices.Contains(actors, *actor) {
-		fail("unknown actor %q, choose from %s", *actor, strings.Join(actors, ", "))
-	}
 
 	logDir := filepath.Join(handoffHome(), folderName(feature))
 	entry := event{
 		TS:      time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
 		Feature: feature,
-		Actor:   *actor,
 		Step:    step,
 		Status:  status,
 		Message: message,
-		Data:    data,
 	}
 
 	if *worktree != "" {

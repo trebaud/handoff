@@ -28,22 +28,22 @@ func line(minute int, repo, step, status, message string) string {
 	if repo != "" {
 		repoField = fmt.Sprintf("%q", repo)
 	}
-	return fmt.Sprintf(`{"ts":"2026-01-02T15:%02d:00.000Z","repo":%s,"actor":"agent","step":%q,"status":%q,"message":%q}`,
+	return fmt.Sprintf(`{"ts":"2026-01-02T15:%02d:00.000Z","repo":%s,"step":%q,"status":%q,"message":%q}`,
 		minute, repoField, step, status, message)
 }
 
 func testView(t *testing.T, rows, cols int) *view {
 	t.Helper()
 	home := t.TempDir()
-	var long []string
+	long := []string{line(0, "", "setup", "done", "spawned")}
 	for i := 0; i < 40; i++ {
-		long = append(long, line(i%60, "api", "implement", "started", fmt.Sprintf("event %d %s", i, strings.Repeat("long ", 40))))
+		long = append(long, line(i%60, "api", "implement", "done", fmt.Sprintf("event %d %s", i, strings.Repeat("long ", 40))))
 	}
 	writeLog(t, home, "running-long", long...)
-	writeLog(t, home, "all-done", line(1, "", "read-task", "done", "read"), line(2, "web", "relay", "done", "relayed"))
+	writeLog(t, home, "all-done", line(1, "", "setup", "done", "spawned"), line(2, "web", "report", "done", "reported"))
 	writeLog(t, home, "broken", line(3, "api", "review", "failed", "typecheck"), "garbage")
 	writeLog(t, home, "waiting", line(4, "api", "implement", "blocked", "needs a decision"))
-	writeLog(t, home, "early", line(5, "", "read-task", "started", "reading"))
+	writeLog(t, home, "early", line(5, "", "setup", "done", "spawned"))
 
 	v := &view{home: home, rows: rows, cols: cols}
 	v.load(readFeatures(home))
@@ -71,10 +71,11 @@ func TestFrameFitsTheTerminal(t *testing.T) {
 	for _, size := range [][2]int{{12, 60}, {24, 80}, {40, 120}, {60, 200}, {5, 20}} {
 		v := testView(t, size[0], size[1])
 		states := map[string]func(){
-			"list":   func() {},
-			"events": func() { v.key("\t"); v.key("k"); v.key("\x1b[5~") },
-			"filter": func() { v.key("/"); v.key("z") },
-			"help":   func() { v.key("\r"); v.key("\x1b"); v.key("?") },
+			"list":    func() {},
+			"events":  func() { v.key("\t"); v.key("k"); v.key("\x1b[5~") },
+			"filter":  func() { v.key("/"); v.key("z") },
+			"help":    func() { v.key("\r"); v.key("\x1b"); v.key("?") },
+			"archive": func() { v.key("d") },
 		}
 		for name, enter := range states {
 			for i := 0; i < len(v.all)+1; i++ {
@@ -192,5 +193,88 @@ func TestPlainSnapshotHasNoEscape(t *testing.T) {
 	v := testView(t, 24, 80)
 	if out := strings.Join(snapshot(painter{}, v.home, v.all, testNow), "\n"); strings.Contains(out, "\x1b") {
 		t.Fatalf("escape sequence in the plain snapshot")
+	}
+}
+
+func TestArchiveMovesTheLog(t *testing.T) {
+	v := testView(t, 24, 80)
+	v.key("d")
+	if v.confirm != "broken" {
+		t.Fatalf("confirm = %q", v.confirm)
+	}
+	v.key("y")
+	if got := names(v.all); !reflect.DeepEqual(got, []string{"waiting", "running-long", "early", "all-done"}) {
+		t.Fatalf("after archive: %v", got)
+	}
+	if v.current().name != "waiting" {
+		t.Fatalf("selected %q", v.current().name)
+	}
+	if _, err := os.Stat(filepath.Join(v.home, ".archive", "broken", "events.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(v.home, "broken")); !os.IsNotExist(err) {
+		t.Fatalf("log still in place: %v", err)
+	}
+}
+
+func TestArchiveKeepsAnEarlierArchive(t *testing.T) {
+	v := testView(t, 24, 80)
+	writeLog(t, filepath.Join(v.home, ".archive"), "broken", line(0, "", "setup", "done", "old"))
+	v.key("d")
+	v.key("y")
+	entries, err := os.ReadDir(filepath.Join(v.home, ".archive"))
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("archive holds %v, %v", entries, err)
+	}
+}
+
+func TestArchiveNeedsYes(t *testing.T) {
+	v := testView(t, 24, 80)
+	v.key("d")
+	v.key("j")
+	if v.confirm != "" || v.selected != 0 || len(v.all) != 5 {
+		t.Fatalf("confirm = %q, selected = %d, %d handoffs", v.confirm, v.selected, len(v.all))
+	}
+}
+
+func TestArchiveRefusesARunningHandoff(t *testing.T) {
+	v := testView(t, 24, 80)
+	v.key("j")
+	v.key("j")
+	v.key("d")
+	if v.current().name != "running-long" || v.confirm != "" || !strings.Contains(v.notice, "running") {
+		t.Fatalf("selected %q, confirm = %q, notice = %q", v.current().name, v.confirm, v.notice)
+	}
+	if _, err := os.Stat(filepath.Join(v.home, "running-long", "events.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTheStepAfterTheLastDoneOneRuns(t *testing.T) {
+	v := testView(t, 24, 80)
+	early := v.all[3]
+	if early.name != "early" || early.now != "implement" || early.steps["implement"] != "started" {
+		t.Fatalf("%s: now %q, steps %v", early.name, early.now, early.steps)
+	}
+	broken := v.all[0]
+	if broken.now != "setup" || broken.steps["setup"] != "" {
+		t.Fatalf("a failed handoff marks no step as running: now %q, steps %v", broken.now, broken.steps)
+	}
+}
+
+func TestAStepIsDoneOnlyInEveryRepo(t *testing.T) {
+	home := t.TempDir()
+	writeLog(t, home, "two-repos",
+		line(0, "", "setup", "done", "spawned"),
+		line(1, "api", "setup", "done", "worktree"),
+		line(1, "web", "setup", "done", "worktree"),
+		line(2, "api", "implement", "done", "built"))
+	f := readFeatures(home)[0]
+	if f.state != "running" || f.now != "implement" || f.steps["implement"] != "started" {
+		t.Fatalf("state %q, now %q, steps %v", f.state, f.now, f.steps)
+	}
+	head := strings.Join(detailHead(painter{}, f, 0), "\n")
+	if !strings.Contains(head, "api  ✓ setup ✓ implement ● review") || !strings.Contains(head, "web  ✓ setup ● implement · review") {
+		t.Fatalf("repo rows:\n%s", head)
 	}
 }
